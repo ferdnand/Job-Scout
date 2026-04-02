@@ -27,6 +27,7 @@ import { generateCSV, downloadCSV } from './utils/csvUtils';
 const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
+  const [verificationEmailForAuth, setVerificationEmailForAuth] = useState<string | null>(null);
   const [step, setStep] = useState<AppStep>(AppStep.IDLE);
   const [jobs, setJobs] = useState<JobListing[]>([]);
   const [status, setStatus] = useState<AgentStatus>({
@@ -50,8 +51,15 @@ const App: React.FC = () => {
   };
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
-      setUser(currentUser);
+    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+      if (currentUser && !currentUser.emailVerified) {
+        setVerificationEmailForAuth(currentUser.email);
+        await signOut(auth);
+        setUser(null);
+      } else {
+        setUser(currentUser);
+        if (currentUser) setVerificationEmailForAuth(null);
+      }
       setAuthLoading(false);
     });
     return () => unsubscribe();
@@ -157,7 +165,12 @@ const App: React.FC = () => {
   }
 
   if (!user) {
-    return <Auth onAuthSuccess={() => {}} />;
+    return (
+      <Auth 
+        onAuthSuccess={() => {}} 
+        initialVerificationEmail={verificationEmailForAuth}
+      />
+    );
   }
 
   return (
