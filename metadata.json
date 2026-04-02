@@ -1,0 +1,5 @@
+{
+  "name": "MEL Kenya Job Scout",
+  "description": "An AI-powered agent that scrapes and aggregates Monitoring & Evaluation job listings in Kenya using Google Search grounding, providing daily reports and CSV exports.",
+  "requestFramePermissions": []
+}
