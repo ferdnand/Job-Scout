@@ -16,7 +16,8 @@ import {
   LogOut
 } from 'lucide-react';
 import { onAuthStateChanged, signOut, User } from 'firebase/auth';
-import { auth } from './firebase';
+import { auth, db } from './firebase';
+import { doc, onSnapshot, updateDoc, increment } from 'firebase/firestore';
 import { Auth } from './components/Auth';
 import { AppStep, JobListing, AgentStatus } from './types';
 import { SEARCH_QUERIES, RECIPIENT_EMAIL, REPORT_TIME } from './constants';
@@ -40,7 +41,14 @@ const App: React.FC = () => {
   const [showEmailModal, setShowEmailModal] = useState(false);
   const [isSendingEmail, setIsSendingEmail] = useState(false);
   const [emailSent, setEmailSent] = useState(false);
+  const [errorToast, setErrorToast] = useState<string | null>(null);
+  const [userMetrics, setUserMetrics] = useState({
+    searchCount: 0,
+    downloadCount: 0,
+    emailCount: 0
+  });
   
+  const recipientEmail = user?.email || RECIPIENT_EMAIL;
   const logContainerRef = useRef<HTMLDivElement>(null);
 
   const addLog = (msg: string) => {
@@ -66,17 +74,49 @@ const App: React.FC = () => {
   }, []);
 
   useEffect(() => {
+    if (!user) {
+      setUserMetrics({ searchCount: 0, downloadCount: 0, emailCount: 0 });
+      return;
+    }
+
+    const userDocRef = doc(db, 'users', user.uid);
+    const unsubscribe = onSnapshot(userDocRef, (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        setUserMetrics({
+          searchCount: data.searchCount || 0,
+          downloadCount: data.downloadCount || 0,
+          emailCount: data.emailCount || 0
+        });
+      }
+    });
+
+    return () => unsubscribe();
+  }, [user]);
+
+  useEffect(() => {
     if (logContainerRef.current) {
       logContainerRef.current.scrollTop = logContainerRef.current.scrollHeight;
     }
   }, [status.logs]);
 
   const startAgent = async () => {
+    if (!user) return;
+    
     setStep(AppStep.SEARCHING);
     setStatus(prev => ({ ...prev, isSearching: true, currentQueryIndex: 0 }));
     setJobs([]);
     setEmailSent(false);
     addLog("Starting daily job scout sequence...");
+
+    // Increment search count
+    try {
+      await updateDoc(doc(db, 'users', user.uid), {
+        searchCount: increment(1)
+      });
+    } catch (error) {
+      console.error("Error updating search count:", error);
+    }
 
     let allFoundJobs: JobListing[] = [];
 
@@ -100,11 +140,22 @@ const App: React.FC = () => {
     addLog("Job scouting completed successfully. Report ready.");
   };
 
-  const handleDownload = () => {
+  const handleDownload = async () => {
+    if (!user) return;
+    
     const csvContent = generateCSV(jobs);
     const date = new Date().toISOString().split('T')[0];
     downloadCSV(csvContent, `google_mel_jobs_${date}.csv`);
     addLog("Report exported to CSV.");
+
+    // Increment download count
+    try {
+      await updateDoc(doc(db, 'users', user.uid), {
+        downloadCount: increment(1)
+      });
+    } catch (error) {
+      console.error("Error updating download count:", error);
+    }
   };
 
   const prepareEmail = async () => {
@@ -114,7 +165,8 @@ const App: React.FC = () => {
       setEmailDraft(draft);
     } else if (jobs.length === 0) {
       addLog("Cannot send email: No jobs found. Run scout first.");
-      alert("Please run the Job Scout first to collect listings.");
+      setErrorToast("Please run the Job Scout first to collect listings.");
+      setTimeout(() => setErrorToast(null), 5000);
       return;
     }
     setShowEmailModal(true);
@@ -122,7 +174,7 @@ const App: React.FC = () => {
 
   const confirmSendEmail = async () => {
     setIsSendingEmail(true);
-    addLog(`Initiating email dispatch to ${RECIPIENT_EMAIL}...`);
+    addLog(`Initiating email dispatch to ${recipientEmail}...`);
     
     // Realistic simulation steps
     await new Promise(r => setTimeout(r, 1000));
@@ -132,11 +184,22 @@ const App: React.FC = () => {
     addLog("Connecting to outgoing mail server...");
     
     await new Promise(r => setTimeout(r, 1000));
-    addLog(`Email successfully sent to ${RECIPIENT_EMAIL}.`);
+    addLog(`Email successfully sent to ${recipientEmail}.`);
     
     setIsSendingEmail(false);
     setShowEmailModal(false);
     setEmailSent(true);
+
+    // Increment email count
+    if (user) {
+      try {
+        await updateDoc(doc(db, 'users', user.uid), {
+          emailCount: increment(1)
+        });
+      } catch (error) {
+        console.error("Error updating email count:", error);
+      }
+    }
     
     // Auto-hide success message after 5 seconds
     setTimeout(() => setEmailSent(false), 5000);
@@ -227,7 +290,20 @@ const App: React.FC = () => {
             <MailCheck className="w-6 h-6" />
             <div>
               <p className="font-bold">Email Dispatched!</p>
-              <p className="text-xs text-emerald-100">Report sent to {RECIPIENT_EMAIL}</p>
+              <p className="text-xs text-emerald-100">Report sent to {recipientEmail}</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Error Toast */}
+      {errorToast && (
+        <div className="fixed top-20 right-4 z-50 animate-in fade-in slide-in-from-top-4 duration-300">
+          <div className="bg-amber-600 text-white px-6 py-4 rounded-2xl shadow-2xl flex items-center space-x-3 border border-amber-500">
+            <X className="w-6 h-6" />
+            <div>
+              <p className="font-bold">Action Required</p>
+              <p className="text-xs text-amber-100">{errorToast}</p>
             </div>
           </div>
         </div>
@@ -236,7 +312,7 @@ const App: React.FC = () => {
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
         
         {/* Statistics & Status Row */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
           <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 hover:border-blue-200 transition-colors">
             <div className="flex items-center justify-between mb-4">
               <div className="bg-blue-50 p-3 rounded-xl">
@@ -284,10 +360,34 @@ const App: React.FC = () => {
               Cloud Synchronized
             </p>
           </div>
+
+          <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 hover:border-amber-200 transition-colors">
+            <div className="flex items-center justify-between mb-4">
+              <div className="bg-amber-50 p-3 rounded-xl">
+                <Terminal className="w-6 h-6 text-amber-600" />
+              </div>
+            </div>
+            <p className="text-slate-500 text-sm font-medium">User Metrics</p>
+            <div className="mt-2 space-y-1">
+              <div className="flex justify-between text-xs font-medium">
+                <span className="text-slate-400">Searches:</span>
+                <span className="text-slate-900 font-bold">{userMetrics.searchCount}</span>
+              </div>
+              <div className="flex justify-between text-xs font-medium">
+                <span className="text-slate-400">Downloads:</span>
+                <span className="text-slate-900 font-bold">{userMetrics.downloadCount}</span>
+              </div>
+              <div className="flex justify-between text-xs font-medium">
+                <span className="text-slate-400">Emails:</span>
+                <span className="text-slate-900 font-bold">{userMetrics.emailCount}</span>
+              </div>
+            </div>
+          </div>
         </div>
 
-        {/* Console & Activity Logs */}
-        <div className="bg-slate-900 rounded-2xl overflow-hidden shadow-xl border border-slate-800">
+        {/* Console & Activity Logs - HIDDEN */}
+        {false && (
+          <div className="bg-slate-900 rounded-2xl overflow-hidden shadow-xl border border-slate-800">
           <div className="bg-slate-800 px-4 py-3 flex items-center justify-between">
             <div className="flex items-center space-x-2">
               <Terminal className="w-4 h-4 text-slate-400" />
@@ -317,6 +417,7 @@ const App: React.FC = () => {
             )}
           </div>
         </div>
+        )}
 
         {/* Email/Export Controls */}
         {jobs.length > 0 && (
@@ -331,7 +432,7 @@ const App: React.FC = () => {
                   Agent Report Ready
                 </h2>
                 <p className="text-blue-100 max-w-lg">
-                  Scout has identified {jobs.length} unique opportunities matching your criteria. You can now download the CSV or dispatch the report to {RECIPIENT_EMAIL}.
+                  Scout has identified {jobs.length} unique opportunities matching your criteria. You can now download the CSV or dispatch the report to {recipientEmail}.
                 </p>
               </div>
               <div className="flex flex-wrap gap-4">
@@ -400,7 +501,7 @@ const App: React.FC = () => {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
                     <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Recipient</div>
-                    <div className="text-slate-900 font-semibold truncate">{RECIPIENT_EMAIL}</div>
+                    <div className="text-slate-900 font-semibold truncate">{recipientEmail}</div>
                   </div>
                   <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100">
                     <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Attachments</div>

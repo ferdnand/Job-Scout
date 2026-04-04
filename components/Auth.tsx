@@ -8,7 +8,8 @@ import {
   GoogleAuthProvider,
   signInWithPopup
 } from 'firebase/auth';
-import { auth } from '../firebase';
+import { auth, db } from '../firebase';
+import { doc, setDoc, getDoc, serverTimestamp } from 'firebase/firestore';
 import { Mail, Lock, Loader2, Search, ArrowRight, CheckCircle2, Chrome } from 'lucide-react';
 
 interface AuthProps {
@@ -30,8 +31,22 @@ export const Auth: React.FC<AuthProps> = ({ onAuthSuccess, initialVerificationEm
     const provider = new GoogleAuthProvider();
     try {
       const result = await signInWithPopup(auth, provider);
-      // Google accounts are usually verified, so we can proceed
       if (result.user) {
+        // Check if user document exists, if not create it
+        const userDocRef = doc(db, 'users', result.user.uid);
+        const userDoc = await getDoc(userDocRef);
+        
+        if (!userDoc.exists()) {
+          await setDoc(userDocRef, {
+            email: result.user.email,
+            displayName: result.user.displayName,
+            plan: 'free',
+            createdAt: serverTimestamp(),
+            searchCount: 0,
+            downloadCount: 0,
+            emailCount: 0
+          });
+        }
         onAuthSuccess();
       }
     } catch (err: any) {
@@ -50,6 +65,18 @@ export const Auth: React.FC<AuthProps> = ({ onAuthSuccess, initialVerificationEm
     try {
       if (isSignUp) {
         const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+        
+        // Create user document in Firestore
+        await setDoc(doc(db, 'users', userCredential.user.uid), {
+          email: email,
+          displayName: '',
+          plan: 'free',
+          createdAt: serverTimestamp(),
+          searchCount: 0,
+          downloadCount: 0,
+          emailCount: 0
+        });
+
         await sendEmailVerification(userCredential.user);
         await signOut(auth);
         setVerificationEmail(email);

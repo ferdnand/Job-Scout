@@ -1,0 +1,25 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile and metrics",
+      "type": "object",
+      "properties": {
+        "displayName": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "plan": { "type": "string", "enum": ["free", "pro"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "searchCount": { "type": "integer", "description": "Number of job searches performed" },
+        "downloadCount": { "type": "integer", "description": "Number of CSV downloads" },
+        "emailCount": { "type": "integer", "description": "Number of job listings sent via email" }
+      },
+      "required": ["email", "createdAt", "searchCount", "downloadCount", "emailCount"]
+    }
+  },
+  "firestore": {
+    "/users/{uid}": {
+      "schema": "User",
+      "description": "User profile and statistics"
+    }
+  }
+}
